@@ -13,6 +13,7 @@ from airflow.operators.bash import BashOperator
 
 SLACK_CONN_ID = 'slack_oliver'
 delay_time = 5
+options = ['end_sensor','stop']
 
 def time_sleep(n):
     time.sleep(n)
@@ -26,10 +27,9 @@ def send_slack(msg, context):
     )
     notification.execute(context=context)
 
-def send_timeout_alert(ti,dag_id,**context):
-    tasks = ti.xcom_pull(key='task_stopped', task_ids='branching')
+def send_timeout_alert(ti,dag_id, branch_id, **context):
+    tasks = ti.xcom_pull(key='task_stopped', task_ids=branch_id)
     sensor_task = context.get("task_instance")
-    #print(context)
     dagrun = DagRun.find(dag_id=dag_id)
 
     task_instances = dagrun[-1].get_task_instances()
@@ -78,20 +78,17 @@ def dag_active_xcom(ti,  dag_id):
 
     return None
 
-def branch_fun(ti):
-    task_info = ti.xcom_pull(key='task_info', task_ids='dag_read')
-
-    print(task_info)
+def branch_func(ti, task_id,options):
+    task_info = ti.xcom_pull(key='task_info', task_ids=task_id)
     task_fail_list = []
     for i in task_info.keys():
         if i != 'success':
             task_fail_list += task_info[i]
-
     ti.xcom_push(key='task_stopped', value=task_fail_list)
     if len(task_info.keys()) > 1:
-        return 'stop'
+        return options[1] #'stop'
     else:
-        return 'end_sensor'
+        return options[0] #'end_sensor'
 
 sensors_dag = DAG(
     dag_id="sensor_test",
@@ -177,17 +174,22 @@ with sensors_dag:
     branching = BranchPythonOperator(
         task_id='branching',
         dag=sensors_dag,
-        python_callable=branch_fun,
+        python_callable=branch_func,
+        op_kwargs={'task_id': read_dag.task_id,
+                   'options': options},
     )
     stop = PythonOperator(
-        task_id='stop',
+        task_id=options[1],
         dag=sensors_dag,
         python_callable=send_timeout_alert,
-        op_kwargs={'dag_id':dummy_dag.dag_id},
+        op_kwargs={'dag_id': dummy_dag.dag_id,
+                   'branch_id': branching.task_id},
         provide_context=True,
 
     )
-    end = DummyOperator(task_id="end_sensor", dag=sensors_dag)
+    end = DummyOperator(task_id=options[0], dag=sensors_dag)
+
+
 
     trigger >> timeout_sleep >> read_dag >> branching
     branching >> stop
