@@ -3,7 +3,7 @@
 ```
 # Airflow needs a home. `~/airflow` is the default, but you can put it
 # somewhere else if you prefer (optional)
-export AIRFLOW_HOME=/Users/yangjungsik/Desktop/git/airflow_study
+export AIRFLOW_HOME= custom path
 
 # Install Airflow using the constraints file
 AIRFLOW_VERSION=2.2.4
@@ -40,10 +40,10 @@ airflow users create --username airflow --password airflow \
 ```
 
 4. Stard airflow
-export AIRFLOW_HOME=/Users/yangjungsik/Desktop/git/airflow_study로 환경변수를 터미널 실행시마다 변경해줘야함
+export AIRFLOW_HOME = custom path로 환경변수를 터미널 실행시마다 변경해줘야함
    
 ```
-export AIRFLOW_HOME=/Users/yangjungsik/Desktop/git/airflow_study
+export AIRFLOW_HOME = custom path
 
 airflow webserver --port 8080
 

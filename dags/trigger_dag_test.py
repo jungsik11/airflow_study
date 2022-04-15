@@ -11,10 +11,16 @@ from airflow.operators.dummy import DummyOperator
 from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
 
+from airflow.decorators import task
+#from airflow.decorators.python import python_task
+
+from airflow.models.taskinstance import TaskInstance
+
 SLACK_CONN_ID = 'slack_oliver'
 delay_time = 5
 options = ['end_sensor','stop']
 
+@task
 def time_sleep(n):
     time.sleep(n)
 
@@ -27,11 +33,11 @@ def send_slack(msg, context):
     )
     notification.execute(context=context)
 
-def send_timeout_alert(ti,dag_id, branch_id, **context):
-    tasks = ti.xcom_pull(key='task_stopped', task_ids=branch_id)
+@task(task_id='stop')
+def send_timeout_alert(dag_id, **context):
     sensor_task = context.get("task_instance")
     dagrun = DagRun.find(dag_id=dag_id)
-
+    print(dag_id,dagrun)
     task_instances = dagrun[-1].get_task_instances()
     message = dedent(
         f"""
@@ -64,19 +70,18 @@ def send_fail_alert(context):
             """)
     send_slack(message, context)
 
-def dag_active_xcom(ti,  dag_id):
+def dag_active_xcom(dag_id,**context):
+    ti = context['ti']
     """Print the Airflow context and ds variable from the context."""
     dagrun = DagRun.find(dag_id=dag_id)
 
     message = {}
     task_instances = dagrun[-1].get_task_instances()
-    print(dagrun[-1].state)
     for task_i in task_instances:
         # 각 task instance의 id와 state를 확인한다.
         message[task_i.current_state()] = message.get(task_i.current_state(),[]) + [task_i.task_id]
     ti.xcom_push(key='task_info', value=message)
 
-    return None
 
 def branch_func(ti, task_id,options):
     task_info = ti.xcom_pull(key='task_info', task_ids=task_id)
@@ -90,11 +95,13 @@ def branch_func(ti, task_id,options):
     else:
         return options[0] #'end_sensor'
 
+
 sensors_dag = DAG(
-    dag_id="sensor_test",
+    dag_id="sensor_test1",
     schedule_interval=None,
     catchup=False,
     start_date=datetime(2022, 4, 5),
+    #dagrun_timeout=timedelta(seconds=10),
     tags=["DEMO"],
 )
 
@@ -156,18 +163,10 @@ with sensors_dag:
         conf={"key": "value"},
         execution_date="{{ execution_date }}",
     )
-
-    timeout_sleep = PythonOperator(
-        task_id='time_sleep',
-        python_callable=time_sleep,
-        op_kwargs={'n':20},
-        dag=sensors_dag
-    )
-
     read_dag = PythonOperator(
         task_id='dag_read',
         python_callable=dag_active_xcom,
-        op_kwargs={'dag_id':'dummy_test'},
+        op_kwargs={'dag_id': 'dummy_test'},
         dag=sensors_dag,
         do_xcom_push=True,
     )
@@ -175,22 +174,13 @@ with sensors_dag:
         task_id='branching',
         dag=sensors_dag,
         python_callable=branch_func,
-        op_kwargs={'task_id': read_dag.task_id,
+        op_kwargs={'task_id': 'read_dag',#.task_id,
                    'options': options},
     )
-    stop = PythonOperator(
-        task_id=options[1],
-        dag=sensors_dag,
-        python_callable=send_timeout_alert,
-        op_kwargs={'dag_id': dummy_dag.dag_id,
-                   'branch_id': branching.task_id},
-        provide_context=True,
 
-    )
     end = DummyOperator(task_id=options[0], dag=sensors_dag)
 
 
-
-    trigger >> timeout_sleep >> read_dag >> branching
-    branching >> stop
+    trigger >> time_sleep(10) >> read_dag >> branching
+    branching >> send_timeout_alert('dummy_test')
     branching >> end
